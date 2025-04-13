@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  bitbuddy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bitbuddy
+    restart: unless-stopped
+    volumes:
+      - bitbuddy_data:/app/data
+    environment:
+      # These environment variables should be set in your Render dashboard
+      - DISCORD_TOKEN=${DISCORD_TOKEN:-your_token_here}
+      - SHOP_CHANNEL_ID=${SHOP_CHANNEL_ID:-0}
+      - TZ=UTC
+    healthcheck:
+      test: ["CMD", "ps", "aux", "|", "grep", "python", "|", "grep", "main.py", ">", "/dev/null", "||", "exit", "1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  bitbuddy_data:
+    name: bitbuddy_data 
