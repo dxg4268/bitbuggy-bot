@@ -5,6 +5,8 @@ import random
 import os
 import asyncio
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 
 # Try to load environment variables from .env file, but don't fail if it doesn't exist
@@ -119,6 +121,31 @@ def init_database(max_retries=5, retry_delay=2):
 conn = init_database()
 c = conn.cursor()
 
+# Define a simple HTTP handler for health checks
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Bot is running')
+        else:
+            self.send_response(404)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+    
+    def log_message(self, format, *args):
+        # Suppress log messages to avoid cluttering console
+        return
+
+# Start HTTP server for health checks
+def start_http_server():
+    port = int(os.getenv('PORT', 8000))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    print(f"Starting health check server on port {port}")
+    server.serve_forever()
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} ({bot.user.id})")
@@ -190,6 +217,10 @@ def cleanup():
 
 # Start the bot
 if __name__ == "__main__":
+    # Start HTTP server in a separate thread for health checks
+    http_thread = threading.Thread(target=start_http_server, daemon=True)
+    http_thread.start()
+    
     try:
         bot.run(TOKEN)
     finally:
