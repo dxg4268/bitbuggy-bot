@@ -1,0 +1,88 @@
+name: Deploy Discord Bot
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/bitbuddy:latest
+            ghcr.io/${{ github.repository_owner }}/bitbuddy:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-to-server:
+    needs: deploy
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            # Create bot directory if it doesn't exist
+            mkdir -p ~/bitbuddy/data
+            
+            # Create or update docker-compose.yml
+            cat > ~/bitbuddy/docker-compose.yml << 'EOL'
+            version: "3.9"
+            
+            services:
+              bitbuddy:
+                image: ghcr.io/${{ github.repository_owner }}/bitbuddy:latest
+                container_name: bitbuddy
+                restart: unless-stopped
+                volumes:
+                  - ./data:/app/data
+                environment:
+                  - DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}
+                  - SHOP_CHANNEL_ID=${{ secrets.SHOP_CHANNEL_ID }}
+                  - TZ=UTC
+                logging:
+                  driver: "json-file"
+                  options:
+                    max-size: "10m"
+                    max-file: "3"
+            EOL
+            
+            # Login to GitHub Container Registry
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
+            
+            # Pull the latest image and restart the bot
+            cd ~/bitbuddy
+            docker-compose pull
+            docker-compose down
+            docker-compose up -d
+            
+            # Verify the bot is running
+            docker ps | grep bitbuddy
+            
+            # Display recent logs
+            docker-compose logs --tail=20 
