@@ -15,6 +15,11 @@ class DailyRewards(commands.Cog):
         self.user_activity = {}  # Track user activity {user_id: minutes_active}
         self.check_activity.start()
         
+        # Reward amounts (increased)
+        self.base_reward = 1000  # Base daily reward (was 100)
+        self.streak_bonus = 200  # Bonus per day of streak (was 20)
+        self.max_streak_bonus = 5000  # Maximum streak bonus (was 500)
+        
     def connect_with_retry(self, max_retries=5, retry_delay=1):
         """Connect to the database with retry logic"""
         DB_PATH = os.getenv('DB_PATH', 'shop.db')
@@ -86,46 +91,52 @@ class DailyRewards(commands.Cog):
             self.user_activity[user_id] += 1
             
     async def give_daily_reward(self, user_id):
-        """Give daily reward to a user"""
-        reward_amount = 100
-        today = datetime.datetime.now().isoformat()
-        
-        # Get user's current streak
-        self.c.execute("SELECT streak FROM daily_rewards WHERE user_id = ?", (user_id,))
-        result = self.c.fetchone()
-        
-        if result:
-            # User exists, update their streak
-            streak = result[0] + 1
-            self.c.execute("UPDATE daily_rewards SET last_claim = ?, streak = ? WHERE user_id = ?", 
-                          (today, streak, user_id))
-        else:
-            # New user, set initial streak
-            streak = 1
-            self.c.execute("INSERT INTO daily_rewards (user_id, last_claim, streak) VALUES (?, ?, ?)", 
-                          (user_id, today, streak))
-        
-        # Add coins to user balance
-        self.c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-        result = self.c.fetchone()
-        
-        if result:
-            new_balance = result[0] + reward_amount
-            self.c.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
-        else:
-            self.c.execute("INSERT INTO users (user_id, balance) VALUES (?, ?)", (user_id, reward_amount))
+        """Give a daily reward to the user"""
+        try:
+            # Check current streak
+            self.c.execute("SELECT streak FROM daily_rewards WHERE user_id = ?", (user_id,))
+            result = self.c.fetchone()
             
-        self.conn.commit()
-        
-        # Try to send a DM to the user if possible
-        user = self.bot.get_user(user_id)
-        if user:
+            streak = 1
+            if result:
+                streak = result[0] + 1
+            
+            # Calculate reward amount with streak bonus
+            streak_bonus = min(streak * self.streak_bonus, self.max_streak_bonus)
+            reward_amount = self.base_reward + streak_bonus
+            
+            # Update user balance
+            self.c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+            result = self.c.fetchone()
+            
+            if result:
+                new_balance = result[0] + reward_amount
+                self.c.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
+            else:
+                # User not in database yet
+                self.c.execute("INSERT INTO users (user_id, balance) VALUES (?, ?)", (user_id, reward_amount))
+            
+            # Update daily rewards record
+            now = datetime.datetime.now().isoformat()
+            self.c.execute(
+                "INSERT OR REPLACE INTO daily_rewards (user_id, last_claim, streak) VALUES (?, ?, ?)",
+                (user_id, now, streak)
+            )
+            
+            self.conn.commit()
+            
+            # Try to notify the user
             try:
-                embed = create_daily_reward_embed(reward_amount, streak)
-                await user.send(embed=embed)
-            except:
-                pass  # User might have DMs closed, that's ok
+                user = await self.bot.fetch_user(user_id)
+                if user:
+                    embed = create_daily_reward_embed(reward_amount, streak)
+                    await user.send(embed=embed)
+            except Exception as e:
+                print(f"Failed to send daily reward notification: {e}")
                 
+        except Exception as e:
+            print(f"Error giving daily reward: {e}")
+    
     @commands.command(name="daily")
     async def daily_status(self, ctx):
         """Check your daily reward status"""

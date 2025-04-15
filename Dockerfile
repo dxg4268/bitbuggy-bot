@@ -1,46 +1,44 @@
-FROM python:3.9-slim
+# Use Python 3.11 slim image as base
+FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV TZ=UTC
-ENV DB_PATH=/app/data/shop.db
-
 # Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
     gcc \
-    git \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
 
-# Create data directory with proper permissions
-RUN mkdir -p /app/data && chmod 777 /app/data
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code (excluding .env files)
-COPY main.py .
-COPY utils/ ./utils/
-COPY README.md .
+# Copy the rest of the application
+COPY . .
 
-# Create and use non-root user for security
-RUN groupadd -r botuser && useradd -r -g botuser botuser
-RUN chown -R botuser:botuser /app /app/data
+# Create necessary directories
+RUN mkdir -p /app/data
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    DB_PATH=/app/data/shop.db \
+    PORT=8000
+
+# Expose the health check port
+EXPOSE 8000
+
+# Create a non-root user
+RUN useradd -m -r botuser && \
+    chown -R botuser:botuser /app
+
+# Switch to non-root user
 USER botuser
 
-# Set up volume for persistent data storage
-VOLUME ["/app/data"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Health check to monitor bot status
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD ps aux | grep python | grep main.py > /dev/null || exit 1
-
-# Command to run when container starts
+# Start the bot
 CMD ["python", "main.py"] 

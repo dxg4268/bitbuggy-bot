@@ -1,25 +1,31 @@
-version: "3.9"
+version: '3.8'
 
 services:
-  bitbuddy:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: bitbuddy
+  bot:
+    build: .
+    container_name: bitbuddy-bot
     restart: unless-stopped
     volumes:
-      - bitbuddy_data:/app/data
+      - ./data:/app/data  # Persistent storage for database
+      - ./.env:/app/.env  # Mount environment file
     environment:
-      # These environment variables should be set in your Render dashboard
-      - DISCORD_TOKEN=${DISCORD_TOKEN:-your_token_here}
-      - SHOP_CHANNEL_ID=${SHOP_CHANNEL_ID:-0}
       - TZ=UTC
+    ports:
+      - "8000:8000"  # Health check port
     healthcheck:
-      test: ["CMD", "ps", "aux", "|", "grep", "python", "|", "grep", "main.py", ">", "/dev/null", "||", "exit", "1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 3s
       retries: 3
-      start_period: 30s
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     logging:
       driver: "json-file"
       options:

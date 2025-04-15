@@ -8,6 +8,7 @@ import time
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
+import traceback
 
 # Try to load environment variables from .env file, but don't fail if it doesn't exist
 try:
@@ -19,9 +20,11 @@ except:
 if not os.path.exists("utils"):
     os.makedirs("utils")
 
-# Get token and shop channel ID from environment variables
+# Get token and channel IDs from environment variables
 TOKEN = os.getenv('DISCORD_TOKEN')
 SHOP_CHANNEL_ID = int(os.getenv('SHOP_CHANNEL_ID', '0'))
+COMMAND_CHANNELS = [int(channel_id.strip()) for channel_id in os.getenv('COMMAND_CHANNELS', '').split(',') if channel_id.strip()]
+POINTS_CHANNEL_ID = int(os.getenv('POINTS_CHANNEL_ID', '0'))
 
 # Check if the token is available
 if not TOKEN:
@@ -29,6 +32,12 @@ if not TOKEN:
 
 if SHOP_CHANNEL_ID == 0:
     print("Warning: SHOP_CHANNEL_ID not set properly. Please set this environment variable.")
+
+if not COMMAND_CHANNELS:
+    print("Warning: COMMAND_CHANNELS not set properly. Please set this environment variable.")
+
+if POINTS_CHANNEL_ID == 0:
+    print("Warning: POINTS_CHANNEL_ID not set properly. Please set this environment variable.")
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -38,6 +47,8 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 bot.shop_channel_id = SHOP_CHANNEL_ID  # Store as attribute for extensions to use
+bot.command_channels = COMMAND_CHANNELS  # Store command channels
+bot.points_channel_id = POINTS_CHANNEL_ID  # Store points channel
 
 # Get database path - use environment variable in Docker or default path
 DB_PATH = os.getenv('DB_PATH', 'shop.db')
@@ -78,13 +89,13 @@ def init_database(max_retries=5, retry_delay=2):
             c.execute("SELECT COUNT(*) FROM shop_items")
             if c.fetchone()[0] == 0:
                 sample_items = [
-                    ("🪼Furina", 500000, 1361011749913890816),
-                    ("🌟Navia", 500000, 1361012791791845477), 
-                    ("🌸Raiden Shogun", 500000, 1361013400758386868),
-                    ("☠One Piece", 500000, 1361014183927349468),
-                    ("🦊Naruto", 500000, 1361014693459656805),
-                    ("愛Bleach", 500000, 1361014463943147721),
-                    ("💎VIP", 250000, 1361014938155483298)
+                    ("🪼Furina", 50000, 1361011749913890816),
+                    ("🌟Navia", 50000, 1361012791791845477), 
+                    ("🌸Raiden Shogun", 50000, 1361013400758386868),
+                    ("☠One Piece", 50000, 1361014183927349468),
+                    ("🦊Naruto", 50000, 1361014693459656805),
+                    ("愛Bleach", 50000, 1361014463943147721),
+                    ("💎VIP", 100000, 1361014938155483298)
                 ]
                 c.executemany("INSERT INTO shop_items (name, price, role_id) VALUES (?, ?, ?)", sample_items)
                 conn.commit()
@@ -151,6 +162,8 @@ async def on_ready():
     print(f"Logged in as {bot.user.name} ({bot.user.id})")
     print(f"Ready to serve {len(bot.guilds)} guilds")
     print(f"Using database: {DB_PATH}")
+    print(f"Command channels: {COMMAND_CHANNELS}")
+    print(f"Points channel: {POINTS_CHANNEL_ID}")
     print("------")
     
     # Load extensions
@@ -172,6 +185,7 @@ async def load_extensions():
             print(f"Loaded extension: {ext}")
         except Exception as e:
             print(f"Failed to load extension {ext}: {e}")
+            traceback.print_exc()  # Add this line to see full error details
 
 # XP + currency system (basic message earning)
 @bot.event
@@ -179,23 +193,37 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    user_id = message.author.id
-    c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    result = c.fetchone()
+    # Only accumulate points in the designated points channel
+    if message.channel.id == POINTS_CHANNEL_ID:
+        user_id = message.author.id
+        c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+        result = c.fetchone()
 
-    if result:
-        new_balance = result[0] + random.randint(1, 5)
-        c.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
-    else:
-        new_balance = random.randint(1, 5)
-        c.execute("INSERT INTO users (user_id, balance) VALUES (?, ?)", (user_id, new_balance))
+        if result:
+            new_balance = result[0] + random.randint(10, 50)
+            c.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
+        else:
+            new_balance = random.randint(10, 50)
+            c.execute("INSERT INTO users (user_id, balance) VALUES (?, ?)", (user_id, new_balance))
 
-    conn.commit()
-    await bot.process_commands(message)
+        conn.commit()
+
+    # Process commands only in allowed channels
+    if message.channel.id in COMMAND_CHANNELS:
+        await bot.process_commands(message)
 
 # Show user balance with embed
 @bot.command()
 async def balance(ctx):
+    # Debug logging
+    print(f"Balance command called in channel {ctx.channel.id}")
+    print(f"Command channels: {COMMAND_CHANNELS}")
+    
+    # Check if command is used in an allowed channel
+    if ctx.channel.id not in COMMAND_CHANNELS:
+        print(f"Balance command rejected - channel {ctx.channel.id} not in allowed channels")
+        return await ctx.send("❌ This command can only be used in designated command channels.")
+    
     from utils.embeds import create_balance_embed
     
     user_id = ctx.author.id
