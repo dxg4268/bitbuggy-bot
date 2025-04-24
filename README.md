@@ -5,7 +5,7 @@ A Discord economy bot with embeds, daily rewards, admin tools, and a shop system
 ## Features
 
 - 💰 Currency system that rewards active users
-- 🎁 Daily rewards for users active for 10+ minutes (1000 coins) with additional Daily Streak rewards
+- 🎁 Daily rewards for users active for 10+ minutes (100 coins)
 - 🛍️ Shop system with anime/game theme role rewards
 - 👑 Admin commands with role-based permissions
 - 🌈 Beautiful embeds for all responses
